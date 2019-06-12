@@ -3,6 +3,25 @@
 #include <sstream>
 #include <Shlobj.h>
 
+std::string GetLastErrorAsString()
+{
+	//Get the error message, if any.
+	DWORD errorMessageID = ::GetLastError();
+	if (errorMessageID == 0)
+		return std::string(); //No error message has been recorded
+
+	LPSTR messageBuffer = nullptr;
+	size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+		NULL, errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
+
+	std::string message(messageBuffer, size);
+
+	//Free the buffer.
+	LocalFree(messageBuffer);
+
+	return message;
+}
+
 std::string join_params(int argc, const char* argv[])
 {
 	std::stringstream params;
@@ -33,7 +52,11 @@ int main(int argc, const char* argv[])
 		sei.lpFile = argv[0];
 		sei.nShow = SW_HIDE;
 		sei.lpParameters = par.c_str();
-		ShellExecuteExA(&sei);
+		if (ShellExecuteExA(&sei) == FALSE)
+		{
+			std::cerr << GetLastErrorAsString();
+			return EXIT_FAILURE;
+		}
 		SetConsoleCtrlHandler(NULL, TRUE);
 		if (WAIT_TIMEOUT == WaitForSingleObject(sei.hProcess, 250))
 		{
@@ -50,6 +73,7 @@ int main(int argc, const char* argv[])
 		auto params = join_params(argc - 4, argv + 4);
 		FreeConsole();
 		AttachConsole(ATTACH_PARENT_PROCESS);
+
 		PROCESS_INFORMATION pi = {};
 		STARTUPINFOA si = {};
 		si.cb = sizeof(si);
@@ -58,7 +82,12 @@ int main(int argc, const char* argv[])
 		DuplicateHandle(hParent, (HANDLE)strtoull(argv[2], nullptr, 16), GetCurrentProcess(), &si.hStdInput, 0, TRUE, DUPLICATE_SAME_ACCESS);
 		DuplicateHandle(hParent, (HANDLE)strtoull(argv[3], nullptr, 16), GetCurrentProcess(), &si.hStdOutput, 0, TRUE, DUPLICATE_SAME_ACCESS);
 		DuplicateHandle(hParent, (HANDLE)strtoull(argv[4], nullptr, 16), GetCurrentProcess(), &si.hStdError, 0, TRUE, DUPLICATE_SAME_ACCESS);
-		CreateProcessA(NULL, &params[0], NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi);
+		if (CreateProcessA(NULL, &params[0], NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi) == FALSE)
+		{
+			auto errorText = GetLastErrorAsString();
+			BOOL rc = WriteFile(si.hStdError, errorText.c_str(), errorText.length(), NULL, NULL);
+			return EXIT_FAILURE;
+		}
 		FreeConsole();
 		WaitForSingleObject(pi.hProcess, INFINITE);
 		DWORD dwRc = 0;
